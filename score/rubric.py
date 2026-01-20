@@ -141,6 +141,14 @@ class CandidateScorer:
         "insurtech": 3,
     }
 
+    # First-person builder patterns for scoring bonus
+    FIRST_PERSON_BUILDER_PATTERNS = [
+        r"\b(i|we) (built|shipped|launched|created|deployed)\b",
+        r"\bmy (project|app|startup|prototype|mvp)\b",
+        r"\bjust (shipped|launched|released)\b",
+        r"\bi('m| am) building\b",
+    ]
+
     def __init__(self):
         pass
 
@@ -168,6 +176,11 @@ class CandidateScorer:
 
         breakdown.communication, breakdown.explanations["communication"] = \
             self._score_communication(candidate)
+
+        # First-person builder bonus (adds to shipping velocity)
+        first_person_bonus, first_person_exp = self._score_first_person_signals(all_text)
+        breakdown.explanations["first_person"] = first_person_exp
+        breakdown.shipping_velocity = min(30, breakdown.shipping_velocity + first_person_bonus)
 
         # Calculate raw total
         breakdown.raw_total = (
@@ -214,6 +227,18 @@ class CandidateScorer:
                 parts.append(str(evidence))
 
         return normalize_text(" ".join(parts))
+
+    def _score_first_person_signals(self, text: str) -> Tuple[float, List[str]]:
+        """Score first-person builder signals (0-5 bonus points)."""
+        points = 0
+        explanations = []
+
+        for pattern in self.FIRST_PERSON_BUILDER_PATTERNS:
+            if re.search(pattern, text, re.IGNORECASE):
+                points += 2
+                explanations.append(f"+2: first-person signal '{pattern[:25]}...'")
+
+        return min(5, points), explanations
 
     def _score_shipping(self, text: str, candidate: Candidate) -> Tuple[float, List[str]]:
         """Score shipping velocity signals (0-30 points)."""

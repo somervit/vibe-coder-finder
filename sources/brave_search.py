@@ -52,6 +52,70 @@ class BraveSearchSource:
     SF_BIAS = '"San Francisco" OR "SF" OR "Bay Area" OR "Silicon Valley"'
     US_BIAS = '"United States" OR "USA" OR California OR "New York"'
 
+    # Negative keywords to exclude tutorial/guide content
+    NEGATIVE_KEYWORDS = [
+        '-tutorial',
+        '-guide',
+        '-"how to"',
+        '-"what is"',
+        '-course',
+        '-"learn to"',
+        '-"best practices"',
+        '-"tips and tricks"',
+        '-"cheat sheet"',
+    ]
+    NEGATIVE_TERMS_STR = " ".join(NEGATIVE_KEYWORDS)
+
+    # Additional negative keywords for LinkedIn queries
+    LINKEDIN_NEGATIVE_KEYWORDS = [
+        '-hiring',
+        '-"we are"',
+        '-"our team"',
+        '-"job opportunity"',
+        '-recruiter',
+    ]
+
+    # First-person builder signals (indicate actual builder)
+    BUILDER_SIGNALS = [
+        r"\b(i|we) (built|shipped|launched|created|made|deployed)\b",
+        r"\bmy (project|app|startup|prototype|mvp|demo|side project)\b",
+        r"\bour (launch|product|app|startup)\b",
+        r"\bi('m| am) (building|shipping|working on)\b",
+        r"\bjust (shipped|launched|deployed|released)\b",
+        r"\bhere('s| is) (my|our) (project|app|demo)\b",
+    ]
+
+    # Third-person content writer signals (indicate tutorial/guide author)
+    WRITER_SIGNALS = [
+        r"\bhow to (build|create|make|use|get started)\b",
+        r"\b(guide|tutorial|introduction) (to|for|on)\b",
+        r"\blearn (how|to)\b",
+        r"\bbest practices (for|when|to)\b",
+        r"\btips (for|and|to)\b",
+        r"\bstep[- ]?by[- ]?step\b",
+        r"\bin this (article|post|guide|tutorial)\b",
+        r"\b(what is|what are)\b.*\?",
+        r"\b(beginner|getting started|101)\b",
+    ]
+
+    # Domains that suggest content marketing vs personal
+    CONTENT_MARKETING_DOMAINS = [
+        "medium.com/",  # Note: medium.com/@username is OK
+        "freecodecamp.org",
+        "geeksforgeeks.org",
+        "towardsdatascience.com",
+        "hackernoon.com",
+    ]
+
+    PERSONAL_DOMAIN_INDICATORS = [
+        ".me/",
+        ".io/",
+        ".dev/",
+        "github.io",
+        "vercel.app",
+        "netlify.app",
+    ]
+
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -70,36 +134,37 @@ class BraveSearchSource:
         self._seen_domains: Set[str] = set()
 
     def _build_queries(self, max_queries: int = 30) -> List[str]:
-        """Build a diverse set of search queries."""
+        """Build a diverse set of search queries with negative keywords to filter tutorials."""
         queries = []
+        neg = self.NEGATIVE_TERMS_STR
 
-        # Tool + Shipping combinations
+        # Tool + Shipping combinations (with negative keywords)
         for tool, ship in product(self.TOOL_TERMS[:4], self.SHIPPING_TERMS[:2]):
-            queries.append(f"({tool}) ({ship})")
+            queries.append(f"({tool}) ({ship}) {neg}")
 
         # Tool + Founder combinations
         for tool, founder in product(self.TOOL_TERMS[:3], self.FOUNDER_TERMS[:3]):
-            queries.append(f"({tool}) ({founder})")
+            queries.append(f"({tool}) ({founder}) {neg}")
 
         # Fintech + Tool combinations
         for fintech, tool in product(self.FINTECH_TERMS, self.TOOL_TERMS[:3]):
-            queries.append(f"({fintech}) ({tool})")
+            queries.append(f"({fintech}) ({tool}) {neg}")
 
         # Add some with location bias
         location_queries = [
-            f'({self.TOOL_TERMS[0]}) ({self.SHIPPING_TERMS[0]}) ({self.SF_BIAS})',
-            f'({self.FOUNDER_TERMS[0]}) ({self.TOOL_TERMS[1]}) ({self.US_BIAS})',
-            f'({self.FINTECH_TERMS[0]}) prototype ({self.SF_BIAS})',
+            f'({self.TOOL_TERMS[0]}) ({self.SHIPPING_TERMS[0]}) ({self.SF_BIAS}) {neg}',
+            f'({self.FOUNDER_TERMS[0]}) ({self.TOOL_TERMS[1]}) ({self.US_BIAS}) {neg}',
+            f'({self.FINTECH_TERMS[0]}) prototype ({self.SF_BIAS}) {neg}',
         ]
         queries.extend(location_queries)
 
-        # LinkedIn-specific queries to find builders posting about their work
+        # LinkedIn-specific queries with stricter first-person requirements
+        # Reduced from 5 to 3 queries due to lower signal quality
+        linkedin_neg = " ".join(self.NEGATIVE_KEYWORDS + self.LINKEDIN_NEGATIVE_KEYWORDS)
         linkedin_queries = [
-            'site:linkedin.com "built with Cursor" OR "shipped" prototype',
-            'site:linkedin.com "launched my" MVP OR "side project"',
-            'site:linkedin.com "AI agent" OR "LLM" shipped',
-            'site:linkedin.com founder "v0" OR "Cursor" OR "Replit"',
-            'site:linkedin.com "product manager" "shipped" prototype AI',
+            f'site:linkedin.com ("I built" OR "I shipped" OR "launched my") prototype {linkedin_neg}',
+            f'site:linkedin.com "my project" OR "my startup" MVP {linkedin_neg}',
+            f'site:linkedin.com founder ("I launched" OR "just shipped") {linkedin_neg}',
         ]
         queries.extend(linkedin_queries)
 
@@ -220,6 +285,93 @@ class BraveSearchSource:
         match = re.search(r"https?://(?:www\.)?([^/]+)", url)
         return match.group(1) if match else None
 
+    def _is_likely_builder(
+        self,
+        result: Dict,
+        page_data: Optional[Dict],
+    ) -> tuple:
+        """
+        Determine if result is likely from an actual builder vs content writer.
+
+        Returns:
+            (is_builder, confidence, signals)
+            - is_builder: True if likely a builder
+            - confidence: 0.0-1.0 score
+            - signals: List of detected signal strings for debugging
+        """
+        signals = []
+        score = 0.5  # Start neutral
+
+        # Collect all text to analyze
+        texts_to_check = []
+
+        title = result.get("title", "")
+        desc = result.get("description", "")
+        url = result.get("url", "")
+
+        texts_to_check.extend([title, desc])
+
+        if page_data:
+            main_content = page_data.get("main_content", "")
+            # Limit content to first 2000 chars for performance
+            texts_to_check.append(main_content[:2000] if main_content else "")
+            for snippet in page_data.get("evidence_snippets", [])[:3]:
+                texts_to_check.append(snippet if isinstance(snippet, str) else "")
+
+        combined_text = " ".join(texts_to_check).lower()
+
+        # Check first-person builder signals (positive)
+        for pattern in self.BUILDER_SIGNALS:
+            if re.search(pattern, combined_text, re.IGNORECASE):
+                score += 0.15
+                signals.append(f"+builder: matched '{pattern[:30]}...'")
+
+        # Check third-person writer signals (negative)
+        for pattern in self.WRITER_SIGNALS:
+            if re.search(pattern, combined_text, re.IGNORECASE):
+                score -= 0.2
+                signals.append(f"-writer: matched '{pattern[:30]}...'")
+
+        # Domain analysis
+        for domain in self.CONTENT_MARKETING_DOMAINS:
+            if domain in url:
+                # Special case: medium.com/@username is personal
+                if "medium.com/@" in url:
+                    score += 0.05
+                    signals.append("+personal: medium.com/@username")
+                else:
+                    score -= 0.15
+                    signals.append(f"-marketing: {domain}")
+                break
+
+        for indicator in self.PERSONAL_DOMAIN_INDICATORS:
+            if indicator in url:
+                score += 0.1
+                signals.append(f"+personal: {indicator}")
+                break
+
+        # Check for author presence (personal sites often have author)
+        if page_data and page_data.get("author"):
+            score += 0.05
+            signals.append("+author: page has author")
+
+        # Title patterns
+        if re.match(r"^(how to|guide|tutorial|learn|tips)", title.lower()):
+            score -= 0.25
+            signals.append("-title: starts with tutorial pattern")
+
+        if re.search(r"\b(show hn|launched|shipped|built|i made)\b", title.lower()):
+            score += 0.15
+            signals.append("+title: contains shipping signal")
+
+        # Clamp score
+        score = max(0.0, min(1.0, score))
+
+        # Decision threshold
+        is_builder = score >= 0.4
+
+        return is_builder, score, signals
+
     def crawl(self, limit: int = 300) -> Generator[Candidate, None, None]:
         """
         Crawl web using Brave Search.
@@ -268,11 +420,28 @@ class BraveSearchSource:
                 if self.fetch_pages:
                     page_data = self._fetch_page(url)
 
+                # Pre-filter: Check if this is likely a builder vs content writer
+                is_builder, confidence, signals = self._is_likely_builder(result, page_data)
+
+                if not is_builder:
+                    logger.debug(
+                        f"Skipping {domain}: likely content writer "
+                        f"(confidence={confidence:.2f}, signals={signals[:3]})"
+                    )
+                    continue
+
                 # Build candidate
                 candidate = self._build_candidate(result, page_data)
                 if candidate:
+                    # Store builder confidence as evidence for transparency
+                    candidate.evidence_snippets.append({
+                        "text": f"Builder confidence: {confidence:.2f}",
+                        "url": url,
+                        "source": "brave_builder_detection",
+                    })
+
                     candidates_found += 1
-                    log_progress(logger, candidates_found, limit, f"Found: {domain}")
+                    log_progress(logger, candidates_found, limit, f"Found: {domain} (conf={confidence:.2f})")
                     yield candidate
 
         logger.info(f"Brave crawl complete. Found {candidates_found} candidates")
