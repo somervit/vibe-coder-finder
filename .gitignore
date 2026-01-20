@@ -1,0 +1,50 @@
+# API Keys and Secrets
+.env
+.env.*
+*.env
+secrets.*
+*credentials*
+*Keys*.png
+*keys*.png
+*.pem
+*.key
+
+# Results (may contain PII)
+results/
+*.csv
+*.json
+!package.json
+!package-lock.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+.venv/
+ENV/
+.eggs/
+*.egg-info/
+*.egg
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+
+# Logs
+*.log
+logs/
