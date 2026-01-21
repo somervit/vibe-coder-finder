@@ -24,6 +24,7 @@ from sources.devto import DevToSource
 from sources.producthunt import ProductHuntSource
 from sources.twitter import TwitterSource
 from sources.reddit import RedditSource
+from sources.yc import YCSource
 from score.rubric import CandidateScorer
 from score.llm_scorer import LLMScorer
 
@@ -78,6 +79,9 @@ def run_search(args):
 
     if args.sources == "all" or "reddit" in args.sources:
         sources_to_run.append(("reddit", RedditSource()))
+
+    if args.sources == "all" or "yc" in args.sources:
+        sources_to_run.append(("yc", YCSource(use_browser=not args.no_fetch)))
 
     if not sources_to_run:
         logger.error("No sources available. Set GITHUB_TOKEN and/or BRAVE_API_KEY.")
@@ -333,7 +337,7 @@ Environment variables:
         "--sources",
         type=str,
         default="all",
-        help="Comma-separated sources to use: github,hn,brave,devto,producthunt,twitter,reddit (default: all)",
+        help="Comma-separated sources to use: github,hn,brave,devto,producthunt,twitter,reddit,yc (default: all)",
     )
     search_parser.add_argument(
         "--score",

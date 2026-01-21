@@ -4,7 +4,7 @@ A pipeline to discover experienced Product Managers and startup founders who dem
 
 ## What It Does
 
-1. **Discovers candidates** from multiple sources (GitHub, Hacker News, Brave Search, Dev.to, ProductHunt, Twitter/X, Reddit)
+1. **Discovers candidates** from multiple sources (GitHub, Hacker News, Brave Search, Dev.to, ProductHunt, Twitter/X, Reddit, YC Directory)
 2. **Extracts structured profiles** with handles, links, bio, email, LinkedIn, and evidence snippets
 3. **Deduplicates across sources** linking GitHub ↔ HN ↔ Twitter ↔ LinkedIn accounts
 4. **Scores candidates** using a transparent rubric for vibe coding signals, founder fit, and location
@@ -71,6 +71,19 @@ python main.py search --limit 200 --score --llm --llm-limit 25
 python main.py search --limit 100 --debug --log-level 10
 ```
 
+### YC Directory Scraping
+
+```bash
+# One-time setup: install Playwright browser
+pip install playwright && playwright install chromium
+
+# Scrape all YC founders from Inactive/Acquired companies (~1,700 companies)
+python main.py search --sources yc --limit 5000 --score
+
+# Faster YC scrape (skip browser, use API data only - less founder info)
+python main.py search --sources yc --limit 5000 --score --no-fetch
+```
+
 ### Score Existing Results
 
 ```bash
@@ -95,7 +108,7 @@ The CSV output includes:
 - `github_username`, `hn_username` - Platform handles
 - `location_raw`, `metro_bucket`, `location_confidence` - Location data
 - `github_url`, `website`, `demo_urls` - Links
-- `sources` - Where they were found (github, hn, brave, devto, producthunt, twitter, reddit)
+- `sources` - Where they were found (github, hn, brave, devto, producthunt, twitter, reddit, yc)
 - Subscore breakdown: `shipping_velocity`, `tooling_signals`, `founder_fit`, `fintech_relevance`, `communication`
 - `recruiter_pitch` - Generated pitch (enhanced by LLM if --llm flag used)
 - `evidence_snippets` - Key quotes and signals
@@ -161,6 +174,13 @@ Each candidate is scored 0-100 with transparent subscores:
 - Discovers location mentions in posts
 - No API key required (uses public JSON API)
 
+### YC Directory (requires playwright)
+- Scrapes YC's company directory for Inactive and Acquired companies (~1,700 companies)
+- Uses Playwright browser automation to extract founder LinkedIn profiles
+- Captures founder names, LinkedIn URLs, and company context
+- No API key required (uses public yc-oss API + YC website)
+- Setup: `pip install playwright && playwright install chromium`
+
 ## Project Structure
 
 ```
@@ -174,7 +194,8 @@ vibe-coder-finder/
 │   ├── devto.py         # Dev.to API crawler
 │   ├── producthunt.py   # ProductHunt crawler
 │   ├── twitter.py       # Twitter/X API crawler
-│   └── reddit.py        # Reddit API crawler
+│   ├── reddit.py        # Reddit API crawler
+│   └── yc.py            # YC Directory scraper
 ├── extract/
 │   ├── html_extract.py  # HTML parsing (email, LinkedIn, location)
 │   ├── github_extract.py# GitHub-specific extraction
